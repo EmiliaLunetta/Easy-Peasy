@@ -1,76 +1,132 @@
-```markdown
-# 🎵🎬 Easy Peasy Chatbot
+# Easy Peasy Chatbot
 
-**Easy Peasy Chatbot** là một bot Telegram thông minh và thân thiện, giúp cải thiện tâm trạng của bạn bằng cách đề xuất âm nhạc từ **Last.fm** và phim ảnh từ **IMDb** dựa trên cảm xúc của bạn.
+> A mood-based music and movie recommendation bot on Telegram, powered by **Sentiment Analysis**, the **Last.fm API**, and **IMDb web scraping**.
 
----
-
-## ✨ Các tính năng chính
-
-1. **Phân tích cảm xúc (Sentiment Analysis):** Sử dụng thư viện `TextBlob` để phân tích phản hồi của bạn đối với các câu hỏi thời tiết, cuộc sống để đưa ra các đề xuất phù hợp.
-2. **Gợi ý âm nhạc (Last.fm API):**
-   - Đề xuất bài hát theo nghệ sĩ yêu thích của bạn.
-   - Nếu không có nghệ sĩ cụ thể, bot sẽ chọn ngẫu nhiên các bài hát dựa theo nhãn (tags) phù hợp với tâm trạng.
-   - Cho phép bạn tiếp tục tìm kiếm hoặc chuyển qua phần gợi ý phim.
-3. **Gợi ý phim ảnh (IMDb Scraping):**
-   - Thu thập dữ liệu phim trực tiếp từ IMDb bằng `BeautifulSoup4`.
-   - Cung cấp tiêu đề phim, tóm tắt nội dung (synopsis) và ảnh poster.
-   - Gợi ý thể loại Drama nếu bạn đang buồn, hoặc Comedy nếu bạn đang vui.
-4. **Nhận phản hồi người dùng:** Bot sẽ hỏi cảm nhận của bạn về chất lượng phục vụ sau khi kết thúc phiên trò chuyện.
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![pyTelegramBotAPI](https://img.shields.io/badge/pyTelegramBotAPI-4.12.0-blue)](https://github.com/eternnoir/pyTelegramBotAPI)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-## 🛠️ Công nghệ và Thư viện sử dụng
+## About The Project
 
-- **Ngôn ngữ:** Python 3.x
-- **Thư viện chính:**
-  - [pyTelegramBotAPI](https://github.com/eternnoir/pyTelegramBotAPI) - Giao tiếp với Telegram Bot API.
-  - [TextBlob](https://textblob.readthedocs.io/) - Phân tích cú pháp và cảm xúc văn bản.
-  - [BeautifulSoup4 (bs4)](https://www.crummy.com/software/BeautifulSoup/bs4/doc/) - Cào dữ liệu phim từ IMDb.
-  - [Requests](https://requests.readthedocs.io/) - Gửi HTTP requests tới Last.fm API và IMDb.
+**Easy Peasy Chatbot** is designed to lift your spirits and brighten your day. By chatting with you and asking about your day, weather, and feelings, the bot analyzes your current mood using Natural Language Processing (NLP) and delivers personalized entertainment:
+
+- **Music Recommendations:** Fetches tracks via the **Last.fm API** based on your favorite artists and emotional tags.
+- **Movie Recommendations:** Scrapes **IMDb** to suggest suitable movies along with titles, synopses, and posters.
 
 ---
 
-## 🚀 Hướng dẫn cài đặt và sử dụng
+## Key Features
 
-### 1. Cài đặt thư viện bắt buộc
-Chạy lệnh sau để cài đặt các thư viện cần thiết:
+- **Mood Detection:** Uses `TextBlob` to perform sentiment polarity analysis on user replies (classifying mood as positive or negative).
+- **Interactive Conversation Flow:** Built using `pyTelegramBotAPI`'s `register_next_step_handler` and custom interactive keyboards (`ReplyKeyboardMarkup`).
+- **Dynamic Music Suggestions:** Supports artist-based lookups and random emotion-tagged songs.
+- **Rich Movie Previews:** Web scraping with `BeautifulSoup` to display posters and plot introductions directly inside Telegram.
+- **Feedback Loop:** Asks if you are satisfied with the suggestions, repeating the search until you find something you like.
+
+---
+
+## Built With (Tech Stack)
+
+- **Language:** Python
+- **Bot Framework:** `pyTelegramBotAPI` (telebot)
+- **Sentiment Analysis:** `TextBlob`
+- **Web Scraping & APIs:** `BeautifulSoup4`, `requests`
+- **Environment Management:** `python-dotenv`
+
+---
+
+## Chatbot Logic & Workflow
+
+```text
+[Greeting] ──> [Ask Mood/Weather/Day Questions] ──> [Sentiment Analysis (TextBlob)]
+                                                              │
+                                                        [User Mood: +/-]
+                                                              │
+                    ┌─────────────────────────────────────────┴─────────────────────────────────────────┐
+                    ▼                                                                                   ▼
+      [Music Recommendation (Y/N)]                                                        [Movie Recommendation (Y/N)]
+        ├── No  ──> Go to Movies                                                            ├── No  ──> Goodbye!
+        └── Yes ──> Ask Favorite Artist                                                     └── Yes ──> Scrape IMDb based on mood
+                     ├── Specific Artist: Recommend tracks                                               ├── Send Title, Poster & Synopsis
+                     └── "None": Recommend by emotion tag                                                └── Satisfied?
+                           └── Satisfied?                                                                     ├── Yes ──> Goodbye!
+                                 ├── Yes ──> Go to Movies                                                     └── No  ──> Suggest other movies
+                                 └── No  ──> Recommend more songs
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.8 or higher installed on your machine.
+- A Telegram account to get a bot token from [@BotFather](https://t.me/botfather).
+- A [Last.fm API Account](https://www.last.fm/api) to get your API Key & Secret.
+
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/<your-username>/easy-peasy-chatbot.git
+   cd easy-peasy-chatbot
+   ```
+
+2. **Create and activate a virtual environment (optional but recommended):**
+   ```bash
+   python -m venv venv
+   # On Windows:
+   venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   ```
+
+3. **Install required dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **Download TextBlob NLTK corpora:**
+   ```bash
+   python -m textblob.download_corpora
+   ```
+
+---
+
+## Configuration
+
+1. Create a `.env` file in the root directory by copying the example file:
+   ```bash
+   cp .env.example .env
+   ```
+2. Open `.env` and fill in your credentials:
+   ```env
+   BOT_TOKEN="your_telegram_bot_token_here"
+   LASTFM_API_KEY="your_lastfm_api_key_here"
+   LASTFM_API_SECRET="your_lastfm_api_secret_here"
+   ```
+
+---
+
+## Usage
+
+Start the chatbot by running:
+
 ```bash
-pip install pyTelegramBotAPI textblob beautifulsoup4 requests
+python bot.py
 ```
 
-### 2. Cấu hình các API Keys
-Mở mã nguồn chính và thiết lập mã Token Telegram cùng khóa API Last.fm của bạn:
-```python
-# Khởi tạo Telegram Bot Token
-bot = telebot.TeleBot("YOUR_TELEGRAM_BOT_TOKEN")
-
-# API Last.fm
-API_KEY = "YOUR_LASTFM_API_KEY"
-API_SECRET = "YOUR_LASTFM_API_SECRET"
-```
-
-### 3. Khởi chạy Bot
-Chạy tệp Python để khởi động bot:
-```bash
-python main.py
-```
-Sau đó, mở Telegram, tìm kiếm bot của bạn và gõ `/start` hoặc bấm nút bắt đầu để trò chuyện.
+Now open Telegram, search for your bot, and send `/start` or a greeting to begin chatting!
 
 ---
 
-## 📋 Kịch bản trò chuyện của Bot (Flowchart)
-1. **/start** -> Bot chào ngẫu nhiên -> Nhấn nút **"Ok. Let's go!!!"**.
-2. Trả lời câu hỏi về thời tiết & cảm xúc hiện tại -> Bot phân tích tâm trạng tích cực/tiêu cực.
-3. Lựa chọn gợi ý nhạc **(Y/N)**:
-   - Nếu **Y**: Nhập tên nghệ sĩ hoặc `none` -> Trả về 10 bài hát -> Hỏi mức độ hài lòng.
-4. Lựa chọn gợi ý phim **(Y/N)**:
-   - Nếu **Y**: Gợi ý 5 bộ phim từ IMDb dựa theo cảm xúc hiện tại.
-5. Đánh giá chất lượng bot -> Tạm biệt!
+## References & Acknowledgments
+
+This project was built with inspiration and references from:
+- [Vecna Telegram Bot](https://github.com/ananyathomas/Vecna)
+- [Dataquest: How to Connect to the Last.fm API](https://www.dataquest.io/blog/last-fm-api-python/)
+- [Habr: Creating Telegram Bots with pyTelegramBotAPI](https://habr.com/ru/articles/580408/)
 
 ---
-
-## 🔗 Tài liệu tham khảo
-- [Vecna GitHub Repository](https://github.com/ananyathomas/Vecna)
-- [Dataquest Last.fm API Tutorial](https://www.dataquest.io/blog/last-fm-api-python/)
-```
