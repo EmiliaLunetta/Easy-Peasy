@@ -33,8 +33,6 @@ except Exception:
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise SystemExit("Thiếu BOT_TOKEN trong file .env")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
