@@ -1,10 +1,3 @@
-"""
-Easy Peasy Chatbot - gợi ý nhạc & phim theo cảm xúc.
-
-Biến môi trường (đặt ở Render > Environment, KHÔNG commit lên GitHub):
-    BOT_TOKEN, LASTFM_API_KEY
-"""
-
 import functools
 import os
 import random
@@ -29,7 +22,7 @@ except ImportError:
 # ==============================================================================
 # CẤU HÌNH
 # ==============================================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip().strip("'\"")
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
 
 if not BOT_TOKEN:
@@ -562,10 +555,17 @@ def goodbye(message):
     )
 
 
-# Handler dự phòng: PHẢI đặt cuối cùng
-@bot.message_handler(content_types=["text"])
+# Handler dự phòng: PHẢI đặt cuối cùng.
+# Bất kỳ tin nhắn nào (hi, sticker, ảnh...) mà không nằm trong flow đang chạy
+# đều khiến bot tự chào và bắt đầu cuộc trò chuyện.
+@bot.message_handler(
+    content_types=[
+        "text", "photo", "sticker", "voice", "video", "document",
+        "audio", "animation", "video_note", "location", "contact",
+    ]
+)
 def fallback(message):
-    bot.send_message(message.chat.id, "Type /start to begin 🙂")
+    greet_user(message)
 
 
 # ==============================================================================
@@ -591,6 +591,12 @@ def start_health_server():
 
 
 if __name__ == "__main__":
+    try:
+        me = bot.get_me()
+        print(f"Logged in as @{me.username}")
+    except Exception as e:
+        raise SystemExit(f"BOT_TOKEN sai hoặc đã bị revoke: {e}")
+
     start_health_server()
     bot.remove_webhook()
     print("Easy Peasy Bot is online...")
