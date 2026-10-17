@@ -1,20 +1,26 @@
 # ==============================================================================
-# PART 1: PREPARATION & INITIALIZATION
+# Easy Peasy Chatbot - phiên bản đã sửa lỗi
+# pip install textblob pyTelegramBotAPI python-dotenv beautifulsoup4 requests nltk
+#
+# File .env cần có:
+#   BOT_TOKEN=xxxxx
+#   LASTFM_API_KEY=xxxxx
+#   LASTFM_API_SECRET=xxxxx
 # ==============================================================================
 
-import json
 import os
-import random
 import re
-from bs4 import BeautifulSoup as SOUP
-from dotenv import load_dotenv
+import json
+import random
+
 import requests
-import requests as HTTP
 import telebot
 from telebot import types
+from bs4 import BeautifulSoup as SOUP
+from dotenv import load_dotenv
 from textblob import TextBlob
 
-# Ensure TextBlob corpora is available
+# Đảm bảo corpora của TextBlob/NLTK có sẵn
 try:
     import nltk
 
@@ -26,30 +32,92 @@ except Exception:
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv(
-    "BOT_TOKEN", "6210560812:AAHH6M5daoJKYqA1PtekQN_vKQ5PmsZTyVk"
-)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise SystemExit("Thiếu BOT_TOKEN trong file .env")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
-API_KEY = os.getenv("LASTFM_API_KEY", "7bc65c1d5adf30658bff0b4a827e7446")
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-headers = {"user-agent": USER_AGENT}
+API_KEY = os.getenv("LASTFM_API_KEY")
+API_SECRET = os.getenv("LASTFM_API_SECRET")
+LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
 
 
-def lastfm_get(url: str, payload: dict) -> requests.Response:
-    return requests.get(url, headers=headers, params=payload)
-
-
-def getImage(image):
+# ==============================================================================
+# PHẦN 1: LAST.FM
+# ==============================================================================
+def get_tracks(method, **extra):
+    """Gọi Last.fm, trả về list track (rỗng nếu lỗi / thiếu key)."""
+    if not API_KEY:
+        return []
+    params = {
+        "method": method,
+        "api_key": API_KEY,
+        "format": "json",
+        "limit": 50,
+        **extra,
+    }
     try:
-        if not image:
-            return "NA"
-        return image.get("src") or image.get("loadlate") or "NA"
+        res = requests.get(
+            LASTFM_URL, headers=headers, params=params, timeout=10
+        ).json()
+    except Exception as e:
+        print(f"Last.fm error: {e}")
+        return []
+    data = res.get("tracks") or res.get("toptracks") or {}
+    tracks = data.get("track", [])
+    # Last.fm trả về dict nếu chỉ có 1 bài
+    return tracks if isinstance(tracks, list) else [tracks]
+
+
+# ==============================================================================
+# PHẦN 2: IMDb
+# ==============================================================================
+FALLBACK_MOVIES = [
+    (
+        "The Pursuit of Happyness",
+        "A struggling salesman takes custody of his son.",
+        "https://www.imdb.com/title/tt0454921/",
+    ),
+    (
+        "Forrest Gump",
+        "The history of the US through an Alabama man's eyes.",
+        "https://www.imdb.com/title/tt0109830/",
+    ),
+    (
+        "About Time",
+        "A young man with the ability to time travel.",
+        "https://www.imdb.com/title/tt2194499/",
+    ),
+    (
+        "Soul",
+        "A musician transported out of his body discovers life.",
+        "https://www.imdb.com/title/tt2948372/",
+    ),
+]
+
+# Lưu danh sách phim theo từng chat (không dùng global chung nữa)
+user_movies = {}
+
+
+def getMovieTitle(tag):
+    """Lấy tên phim từ thẻ HTML, bỏ số thứ tự kiểu '1. '."""
+    try:
+        text = tag.get_text(" ", strip=True)
+        return re.sub(r"^\d+\.\s*", "", text) or "Unknown"
     except Exception:
-        return "NA"
+        return "Unknown"
 
 
 def getsynopsys(movie):
+    """Lấy tóm tắt phim."""
+    default = "Check IMDb link for full plot and cast details."
     try:
         syn = movie.find(
             ["div", "p", "span"],
@@ -59,46 +127,21 @@ def getsynopsys(movie):
                 "text-muted",
             ],
         )
-        if syn:
-            return syn.getText().strip()
-        return "Check IMDb link for full plot details."
+        return syn.get_text().strip() if syn else default
     except Exception:
-        return "Check IMDb link for full plot details."
-
-
-def getMovieTitle(header):
-    try:
-        if not header:
-            return "Unknown Movie"
-        tag = header[0] if isinstance(header, list) else header
-        return re.sub(r"^\d+\.\s*", "", tag.getText().strip())
-    except Exception:
-        return "Unknown Movie"
-
-
-movie_title_arr = []
-movie_synopsis_arr = []
-image_url_arr = []
+        return default
 
 
 def main(emotion):
-    global movie_title_arr, movie_synopsis_arr, image_url_arr
-    movie_title_arr.clear()
-    movie_synopsis_arr.clear()
-    image_url_arr.clear()
-
+    """Scrape IMDb theo tâm trạng. Trả về list (title, synopsis, link)."""
+    movies = []
     genre = "drama" if emotion == "sad" else "comedy"
-    urlhere = (
-        f"https://www.imdb.com/search/title/?genres={genre}&title_type=feature"
-    )
-    headers_browser = {
-        "User-Agent": USER_AGENT,
-        "Accept-Language": "en-US,en;q=0.9",
-    }
+    url = f"https://www.imdb.com/search/title/?genres={genre}&title_type=feature"
 
     try:
-        response = HTTP.get(urlhere, headers=headers_browser, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         soup = SOUP(response.text, "html.parser")
+
         items = soup.find_all(
             ["li", "div"],
             class_=[
@@ -107,88 +150,87 @@ def main(emotion):
             ],
         )
 
+        seen = set()
         for item in items[:15]:
             link_tag = item.find("a", href=lambda h: h and "/title/tt" in h)
-            if link_tag and link_tag.get("href"):
-                raw_href = link_tag["href"].split("?")[0]
-                movie_link = f"https://www.imdb.com{raw_href}"
-                header = item.find(
-                    ["h3", "a"],
-                    class_=["ipc-title__text", "lister-item-header"],
+            if not link_tag:
+                continue
+            link = "https://www.imdb.com" + link_tag["href"].split("?")[0]
+            if link in seen:
+                continue
+
+            header = item.find(
+                ["h3", "a"], class_=["ipc-title__text", "lister-item-header"]
+            )
+            title = getMovieTitle(header if header else link_tag)
+            if title:
+                seen.add(link)
+                movies.append((title, getsynopsys(item), link))
+
+        # Dự phòng qua __NEXT_DATA__
+        if not movies:
+            script_tag = soup.find("script", id="__NEXT_DATA__")
+            if script_tag and script_tag.string:
+                data = json.loads(script_tag.string)
+                titles = (
+                    data.get("props", {})
+                    .get("pageProps", {})
+                    .get("searchResults", {})
+                    .get("titleListItems", [])
                 )
-                title = getMovieTitle(header if header else link_tag)
-                synopsis = getsynopsys(item)
-
-                if title and movie_link not in image_url_arr:
-                    movie_title_arr.append(title)
-                    movie_synopsis_arr.append(synopsis)
-                    image_url_arr.append(movie_link)
+                for t in titles[:10]:
+                    t_id, t_name = t.get("titleId"), t.get("titleText")
+                    if t_id and t_name:
+                        movies.append(
+                            (
+                                t_name,
+                                t.get(
+                                    "plot",
+                                    "Check IMDb link for full plot details.",
+                                ),
+                                f"https://www.imdb.com/title/{t_id}/",
+                            )
+                        )
     except Exception as e:
-        print(f"Error IMDb: {e}")
+        print(f"Error scraping IMDb: {e}")
 
-    # Fallback with real working IMDb URLs if blocked
-    if not movie_title_arr:
-        if emotion == "sad":
-            movie_title_arr.extend(
-                ["The Pursuit of Happyness", "Forrest Gump", "Good Will Hunting"]
-            )
-            movie_synopsis_arr.extend([
-                "A struggling salesman takes custody of his son.",
-                "The history of the US through an Alabama man's eyes.",
-                "A janitor at M.I.T. has a gift for mathematics.",
-            ])
-            image_url_arr.extend([
-                "https://www.imdb.com/title/tt0454921/",
-                "https://www.imdb.com/title/tt0109830/",
-                "https://www.imdb.com/title/tt0119217/",
-            ])
-        else:
-            movie_title_arr.extend(
-                ["About Time", "The Grand Budapest Hotel", "Soul"]
-            )
-            movie_synopsis_arr.extend([
-                "Tim discovers he can travel in time and change his life.",
-                "Adventures of a legendary concierge at a famous hotel.",
-                "A jazz musician discovers what it really means to have soul.",
-            ])
-            image_url_arr.extend([
-                "https://www.imdb.com/title/tt2194499/",
-                "https://www.imdb.com/title/tt2278388/",
-                "https://www.imdb.com/title/tt2948372/",
-            ])
+    return movies or FALLBACK_MOVIES
+
+
+def send_movies(chat_id, movies, check):
+    """Gửi tối đa 5 phim chưa gợi ý."""
+    pool = [i for i in range(len(movies)) if i not in check]
+    if not pool:
+        bot.send_message(chat_id, "Hết phim để gợi ý rồi 😅")
+        return
+    for j in random.sample(pool, min(5, len(pool))):
+        check.append(j)
+        title, synopsis, link = movies[j]
+        bot.send_message(chat_id, f"🎬 {title}\n📖 {synopsis}\n🔗 {link}")
 
 
 # ==============================================================================
-# PART 2: STRICT STEP-BY-STEP CONVERSATION FLOW
+# PHẦN 3: BOT HANDLERS
 # ==============================================================================
-
-
-# 1. Start & Greeting
 @bot.message_handler(commands=["start", "help"])
 def greet_user(message):
     sentences = [
-        (
-            "Hello there! Welcome to Easy Peasy Chatbot. I'm here to help you"
-            " find the perfect music and movies to suit your mood. 😊"
-        ),
-        (
-            "Hi! I am Easy Peasy Chatbot, your personal entertainment"
-            " assistant. Let's get started on finding you some great music and"
-            " movies. 🎵🎬"
-        ),
-        (
-            "Greetings! I am Easy Peasy Chatbot and I am here to help you"
-            " discover new music and movies that you'll love. Let's get"
-            " started! 🎶🎥"
-        ),
+        "Hello there! Welcome to Easy Peasy Chatbot. I'm here to help you"
+        " find the perfect music and movies to suit your mood. 😊",
+        "Hi! I am Easy Peasy Chatbot, your personal entertainment assistant."
+        " Let's get started on finding you some great music and movies. 🎵🎬",
+        "Greetings! I am Easy Peasy Chatbot and I am here to help you"
+        " discover new music and movies that you'll love. Let's get"
+        " started! 🎶🎥",
     ]
     bot.send_message(message.chat.id, random.choice(sentences))
 
     keyboard = types.InlineKeyboardMarkup()
-    button = types.InlineKeyboardButton(
-        text="Ok. Let's go!!!", callback_data="start_flow"
+    keyboard.add(
+        types.InlineKeyboardButton(
+            text="Ok. Let's go!!!", callback_data="Ok. Let's go!!!"
+        )
     )
-    keyboard.add(button)
     bot.send_message(
         message.chat.id,
         "Please press the button below to continue.",
@@ -196,337 +238,249 @@ def greet_user(message):
     )
 
 
-# 2. Callback -> Question 1 (Weather)
-@bot.callback_query_handler(func=lambda call: call.data == "start_flow")
+@bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
-    keyboard1 = types.ReplyKeyboardMarkup(
-        one_time_keyboard=True, resize_keyboard=True
-    )
-    keyboard1.add("Sunny and warm", "Rainy and humid")
-    keyboard1.add("Cloudy and coolll", "Cold and snowy")
-    msg = bot.send_message(
-        call.message.chat.id,
-        "What is the weather like today?",
-        reply_markup=keyboard1,
-    )
-    bot.register_next_step_handler(msg, step_weather)
+    bot.answer_callback_query(call.id)
+    if call.data == "Ok. Let's go!!!":
+        keyboard = types.ReplyKeyboardMarkup(
+            one_time_keyboard=True, resize_keyboard=True
+        )
+        for text in WEATHER_OPTIONS:
+            keyboard.add(types.KeyboardButton(text))
+        bot.send_message(
+            call.message.chat.id,
+            "What is the weather like today?",
+            reply_markup=keyboard,
+        )
 
 
-# 3. Handle Weather -> Question 2 (Day/Mood)
-def step_weather(message):
-    reply = message.text
-    blob = TextBlob(reply)
-    emo = ["P" if blob.polarity > 0 else "N"]
+WEATHER_OPTIONS = [
+    "Sunny and warm",
+    "Rainy and humid",
+    "Cloudy and cool",
+    "Cold and snowy",
+]
 
+
+@bot.message_handler(func=lambda m: m.text in WEATHER_OPTIONS)
+def weather(message):
+    blob = TextBlob(message.text)
+    positive_responses = [
+        "It's a beautiful day!",
+        "The weather is perfect.",
+        "Woww, that's niceee!",
+    ]
+    negative_responses = [
+        "Such a gloomy day.",
+        "I see, the weather is not great.",
+        "Ahhhh, really!? ",
+    ]
+
+    emo = []
     if blob.polarity > 0:
-        bot.send_message(
-            message.chat.id, "It's a beautiful day! The weather is perfect. ☀️"
-        )
+        bot.send_message(message.chat.id, random.choice(positive_responses))
+        emo.append("P")
     else:
-        bot.send_message(
-            message.chat.id, "Such a gloomy day. I see the weather isn't great."
-        )
+        bot.send_message(message.chat.id, random.choice(negative_responses))
+        emo.append("N")
 
     questions = [
-        "Hey, how has your day been?",
-        "How's your day been so far?",
-        "How has life been treating you this fine day?",
+        "Hey how has your day been?",
+        "How's the day been so far?",
+        "Ahh friend how has life been treating you this fine day?",
     ]
-    msg = bot.send_message(
-        message.chat.id,
-        random.choice(questions),
-        reply_markup=types.ReplyKeyboardRemove(),
-    )
-    bot.register_next_step_handler(msg, step_mood, emo)
+    bot.send_message(message.chat.id, random.choice(questions))
+    # QUAN TRỌNG: đăng ký bước tiếp theo, không còn dựa vào handler bắt-mọi-tin-nhắn
+    bot.register_next_step_handler(message, mood, emo)
 
 
-# 4. Handle Mood -> Ask Music Decision (Y/N)
-def step_mood(message):
-    reply = message.text
-    blob = TextBlob(reply)
-    emo = "P" if blob.polarity >= 0 else "N"
-
-    if emo == "P":
-        bot.send_message(
-            message.chat.id, "That's good to hear! Look at you living life :)"
-        )
-    else:
-        bot.send_message(
-            message.chat.id,
-            "I'm sorry to hear that. Hopefully everything gets better soon!",
-        )
-
-    markup = types.ReplyKeyboardMarkup(
-        one_time_keyboard=True, resize_keyboard=True
-    )
-    markup.add("Y", "N")
-    msg = bot.send_message(
-        message.chat.id,
-        "Now, how about some music to suit your mood? (Y/N)",
-        reply_markup=markup,
-    )
-    bot.register_next_step_handler(msg, step_music_decision, emo)
-
-
-# 5. Music Decision Handler
-def step_music_decision(message, emo):
-    choice = message.text.strip().upper()
-    if choice == "Y":
-        msg = bot.send_message(
-            message.chat.id,
-            "Who is your favorite artist? (Type your favorite artist's name, or"
-            " type 'none'):",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        bot.register_next_step_handler(msg, step_artist_recommend, emo)
-    else:
-        # User doesn't want music -> Go directly to movie intro
-        ask_movie_intro(message, emo)
-
-
-# 6. Recommend Songs from Last.fm
-def step_artist_recommend(message, emo):
-    artist = message.text.strip()
-    check = []
-
-    if artist.lower() == "none":
-        tag = (
-            random.choice(["happy", "pop", "dance"])
-            if emo == "P"
-            else random.choice(["sad", "blues", "indie"])
-        )
-        url = f"http://ws.audioscrobbler.com/2.0/?method=tag.gettoptracks&tag={tag}&api_key={API_KEY}&format=json"
-        r = lastfm_get(url, {"method": "tag.gettoptracks"})
-        try:
-            raw_tracks = r.json().get("tracks", {}).get("track", [])
-        except Exception:
-            raw_tracks = []
-    else:
-        url = f"http://ws.audioscrobbler.com/2.0/?method=artist.gettoptracks&artist={artist}&api_key={API_KEY}&format=json"
-        r = lastfm_get(url, {"method": "artist.gettoptracks"})
-        try:
-            raw_tracks = r.json().get("toptracks", {}).get("track", [])
-        except Exception:
-            raw_tracks = []
-
-    if not raw_tracks:
-        bot.send_message(
-            message.chat.id,
-            "Could not find matching tracks for that choice.",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-    else:
-        limit = min(5, len(raw_tracks))
-        bot.send_message(
-            message.chat.id,
-            "🎵 Here are some songs for you:",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        for i in range(limit):
-            j = random.choice(range(len(raw_tracks)))
-            if j not in check:
-                check.append(j)
-                track = raw_tracks[j]
-                bot.send_message(
-                    message.chat.id,
-                    f"• {track['name']} by {track['artist']['name']} -\n{track.get('url', '')}",
-                )
-
-    # Ask satisfaction for Music
-    markup = types.ReplyKeyboardMarkup(
-        one_time_keyboard=True, resize_keyboard=True
-    )
-    markup.add("Y", "N")
-    msg = bot.send_message(
-        message.chat.id,
-        "Are you satisfied with the music recommendations? (Y/N)",
-        reply_markup=markup,
-    )
-    bot.register_next_step_handler(msg, step_music_feedback, emo)
-
-
-# 7. Check Music Satisfaction
-def step_music_feedback(message, emo):
-    choice = message.text.strip().upper()
-    if choice == "Y":
-        bot.send_message(message.chat.id, "Awesome! Glad you enjoyed the music.")
-        ask_movie_intro(message, emo)
-    else:
-        # Not satisfied -> Ask if they want other songs
-        markup = types.ReplyKeyboardMarkup(
-            one_time_keyboard=True, resize_keyboard=True
-        )
-        markup.add("Y", "N")
-        msg = bot.send_message(
-            message.chat.id,
-            "Do you want me to recommend different songs? (Y/N)",
-            reply_markup=markup,
-        )
-        bot.register_next_step_handler(msg, step_music_retry_decision, emo)
-
-
-def step_music_retry_decision(message, emo):
-    choice = message.text.strip().upper()
-    if choice == "Y":
-        msg = bot.send_message(
-            message.chat.id,
-            "Tell me an artist name (or 'none'):",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        bot.register_next_step_handler(msg, step_artist_recommend, emo)
-    else:
-        # Move on to movies
-        ask_movie_intro(message, emo)
-
-
-# ==============================================================================
-# MOVIE SECTION (STRICTLY ISOLATED)
-# ==============================================================================
-
-
-def ask_movie_intro(message, emo):
-    markup = types.ReplyKeyboardMarkup(
-        one_time_keyboard=True, resize_keyboard=True
-    )
-    markup.add("Y", "N")
-    msg = bot.send_message(
-        message.chat.id,
-        "Now, how about some movies to suit your mood? (Y/N)",
-        reply_markup=markup,
-    )
-    bot.register_next_step_handler(msg, step_movie_decision, emo)
-
-
-def step_movie_decision(message, emo):
-    choice = message.text.strip().upper()
-    if choice == "Y":
-        bot.send_message(
-            message.chat.id,
-            "Fetching movie recommendations from IMDb...",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        main("happy" if emo == "P" else "sad")
-        send_movies_to_user(message, emo)
-    else:
-        # User says NO to movies -> Say goodbye immediately, do not hang!
-        bot.send_message(
-            message.chat.id,
-            "Okay, no movies! What did you think about chatting with me today?",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        bot.register_next_step_handler(message, step_user_feedback)
-
-
-def send_movies_to_user(message, emo):
-    num_movies = len(movie_title_arr)
-    count = min(3, num_movies)
-    check = []
-
-    for _ in range(count):
-        j = random.choice(range(num_movies))
-        if j not in check:
-            check.append(j)
-            bot.send_message(
-                message.chat.id,
-                f"🎬 {movie_title_arr[j]}\n📖 {movie_synopsis_arr[j]}\n🔗 {image_url_arr[j]}",
-            )
-
-    markup = types.ReplyKeyboardMarkup(
-        one_time_keyboard=True, resize_keyboard=True
-    )
-    markup.add("Y", "N")
-    msg = bot.send_message(
-        message.chat.id,
-        "Are you satisfied with these movie recommendations? (Y/N)",
-        reply_markup=markup,
-    )
-    bot.register_next_step_handler(msg, step_movie_satisfaction, emo)
-
-
-def step_movie_satisfaction(message, emo):
-    choice = message.text.strip().upper()
-    if choice == "Y":
-        bot.send_message(
-            message.chat.id, "I'm so glad you liked the movie picks! 🍿"
-        )
-        msg = bot.send_message(
-            message.chat.id,
-            "Before we say goodbye, what do you think about me?",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        bot.register_next_step_handler(msg, step_user_feedback)
-    else:
-        # User says NO (Not satisfied) -> Ask if they want other movies
-        markup = types.ReplyKeyboardMarkup(
-            one_time_keyboard=True, resize_keyboard=True
-        )
-        markup.add("Y", "N")
-        msg = bot.send_message(
-            message.chat.id,
-            "Would you like to see other movie suggestions? (Y/N)",
-            reply_markup=markup,
-        )
-        bot.register_next_step_handler(msg, step_movie_retry_decision, emo)
-
-
-def step_movie_retry_decision(message, emo):
-    choice = message.text.strip().upper()
-    if choice == "Y":
-        bot.send_message(
-            message.chat.id,
-            "Here are some other picks for you:",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        send_movies_to_user(message, emo)
-    else:
-        # Doesn't want more movies -> Go to farewell
-        bot.send_message(
-            message.chat.id,
-            "Okay, no more movies for now!",
-            reply_markup=types.ReplyKeyboardRemove(),
-        )
-        msg = bot.send_message(
-            message.chat.id, "What do you think about chatting with me today?"
-        )
-        bot.register_next_step_handler(msg, step_user_feedback)
-
-
-# ==============================================================================
-# FAREWELL & FEEDBACK
-# ==============================================================================
-
-
-def step_user_feedback(message):
-    reply = message.text
-    blob = TextBlob(reply)
+def mood(message, emo):
+    blob = TextBlob(message.text or "")
+    positive_responses = [
+        "That's good to hear",
+        "NICEEE, good for you",
+        "Look at you living the life :)",
+        "Let's rock!!!",
+    ]
+    negative_responses = [
+        "I'm sorry to hear that",
+        "Hopefully everything will get better",
+        "You'll get through this",
+        "Let me light your day up :)",
+    ]
 
     if blob.polarity > 0:
-        bot.send_message(message.chat.id, "OMG THANKSS!! You're making me blush!! 🥰")
+        bot.send_message(message.chat.id, random.choice(positive_responses))
+        emo.append("P")
+    else:
+        bot.send_message(message.chat.id, random.choice(negative_responses))
+        emo.append("N")
+
+    bot.send_message(
+        message.chat.id, "Now, how about some music to suit your mood? Y/N"
+    )
+    bot.register_next_step_handler(message, music, emo)
+
+
+def music(message, emo):
+    answer = (message.text or "").strip().lower()
+    c = max(emo, key=emo.count) if emo else "P"
+    check = []
+
+    if answer == "y":
+        bot.send_message(
+            message.chat.id, "Who is your favorite artist? name/none"
+        )
+        bot.register_next_step_handler(message, artist_recommendation, c, check)
     else:
         bot.send_message(
             message.chat.id,
-            "I see, thanks for your feedback! I will try to do better next"
-            " time. 🥺",
+            "Okay, no music then. How about some movies to suit your mood? Y/N",
         )
+        bot.register_next_step_handler(message, movie_recommendation, c, check)
+
+
+def artist_recommendation(message, c, check):
+    artist = (message.text or "").strip()
+
+    if artist.lower() == "none":
+        if c == "P":
+            tag = random.choice(["happy", "pop", "rock", "dance"])
+        else:
+            tag = random.choice(["sad", "blues", "indie", "metal"])
+        raw_tracks = get_tracks("tag.gettoptracks", tag=tag)
+        not_found = "Sorry, no tracks found for this mood tag."
+    else:
+        raw_tracks = get_tracks("artist.gettoptracks", artist=artist)
+        not_found = f"Sorry, no tracks found for artist '{artist}'."
+
+    if not raw_tracks:
+        bot.send_message(message.chat.id, not_found)
+    else:
+        pool = [i for i in range(len(raw_tracks)) if i not in check]
+        for j in random.sample(pool, min(10, len(pool))):
+            check.append(j)
+            t = raw_tracks[j]
+            bot.send_message(
+                message.chat.id,
+                f"{t.get('name', '?')} by"
+                f" {t.get('artist', {}).get('name', '?')} -"
+                f" {t.get('url', '')}",
+            )
 
     bot.send_message(
+        message.chat.id, "Are you satisfied with the music recommendations? Y/N"
+    )
+    bot.register_next_step_handler(message, music_feedback, c, check)
+
+
+def music_feedback(message, c, check):
+    if (message.text or "").strip().lower() != "y":
+        bot.send_message(
+            message.chat.id, "Do you want to continue or quit? C/Q"
+        )
+        bot.register_next_step_handler(message, music_continue, c, check)
+    else:
+        bot.send_message(message.chat.id, "I am glad you enjoyed the music")
+        bot.send_message(
+            message.chat.id, "Now, how about some movies to suit your mood? Y/N"
+        )
+        bot.register_next_step_handler(message, movie_recommendation, c, [])
+
+
+def music_continue(message, c, check):
+    if (message.text or "").strip().lower() == "q":
+        bot.send_message(
+            message.chat.id,
+            "Okay, let's move on to the movie part. How about some movies to"
+            " suit your mood? Y/N",
+        )
+        bot.register_next_step_handler(message, movie_recommendation, c, [])
+    else:
+        bot.send_message(
+            message.chat.id, "Who is your favorite artist? name/none"
+        )
+        bot.register_next_step_handler(message, artist_recommendation, c, check)
+
+
+def movie_recommendation(message, c, check=None):
+    check = [] if check is None else check
+
+    if (message.text or "").strip().lower() == "y":
+        movies = main("happy" if c == "P" else "sad")
+        user_movies[message.chat.id] = movies
+        send_movies(message.chat.id, movies, check)
+        bot.send_message(
+            message.chat.id, "Are you satisfied with movie recommendations? Y/N"
+        )
+        bot.register_next_step_handler(message, movie_feedback, c, check)
+    else:
+        goodbye(message)  # chào luôn, không chờ thêm tin nhắn
+
+
+def movie_feedback(message, c, check):
+    if (message.text or "").strip().lower() != "y":
+        bot.send_message(
+            message.chat.id, "Do you want to continue or quit? C/Q"
+        )
+        bot.register_next_step_handler(message, movie_continue, c, check)
+    else:
+        bot.send_message(message.chat.id, "I am glad you enjoyed the movie")
+        bot.send_message(message.chat.id, "What do you think about me?")
+        bot.register_next_step_handler(message, user_feedback)
+
+
+def movie_continue(message, c, check):
+    if (message.text or "").strip().lower() == "c":
+        movies = user_movies.get(message.chat.id) or main(
+            "happy" if c == "P" else "sad"
+        )
+        user_movies[message.chat.id] = movies
+        send_movies(message.chat.id, movies, check)
+        bot.send_message(
+            message.chat.id, "Are you satisfied with movie recommendations? Y/N"
+        )
+        bot.register_next_step_handler(message, movie_feedback, c, check)
+    else:
+        bot.send_message(message.chat.id, "Okay, there will be no movie then")
+        bot.send_message(message.chat.id, "What do you think about me?")
+        bot.register_next_step_handler(message, user_feedback)
+
+
+def user_feedback(message):
+    polarity = TextBlob(message.text or "").polarity
+    positive_responses = [
+        "Hehehe thankss xD",
+        "OMG THANKSS!!",
+        "You're making me blush!!",
+    ]
+    negative_responses = [
+        "I see, thanks for your comments",
+        "UGGGGHH HEYYYY",
+        "Ahhh~~~~",
+    ]
+    bot.send_message(
         message.chat.id,
-        "Thank you for chatting with me. I hope you enjoyed it! Type /start"
-        " whenever you want to hang out again. See ya!!!! 😊👋",
-        reply_markup=types.ReplyKeyboardRemove(),
+        random.choice(positive_responses if polarity > 0 else negative_responses),
+    )
+    goodbye(message)  # chào luôn
+
+
+def goodbye(message):
+    user_movies.pop(message.chat.id, None)
+    bot.send_message(
+        message.chat.id,
+        "Thank you for chatting with me. I hope you enjoyed it. See ya!!!! :)"
+        "\nGõ /start để bắt đầu lại nhé.",
     )
 
 
-# Fallback for unexpected messages: Guide user back to /start
-@bot.message_handler(func=lambda msg: True)
-def fallback_handler(message):
-    bot.send_message(
-        message.chat.id,
-        "I'm waiting for your commands! Type /start to start a fresh"
-        " conversation. 😊",
-    )
+# Handler dự phòng: PHẢI đặt cuối cùng
+@bot.message_handler(content_types=["text"])
+def fallback(message):
+    bot.send_message(message.chat.id, "Gõ /start để bắt đầu nhé 🙂")
 
 
 if __name__ == "__main__":
-    print("Easy Peasy Bot is online and running...")
+    print("Easy Peasy Bot is online and running 24/7...")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
