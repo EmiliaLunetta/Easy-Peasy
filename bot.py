@@ -15,7 +15,8 @@ import requests as HTTP
 import telebot
 from telebot import types
 from textblob import TextBlob
-
+import json
+import re
 # These lines are importing the required libraries for the code.
 # os is a library for interacting with the operating system, requests is a library for making HTTP requests,
 # telebot is a library for creating Telegram bots,
@@ -65,27 +66,120 @@ def lastfm_get(url: str, payload: dict) -> requests.Response:
 
 # Prepare for movie recommendation
 def getImage(image):
+    """Extracts the image URL from modern or legacy IMDb elements."""
     try:
-        url = image.get("loadlate")
-        if not url:
-            url = image.get("src")
-        return url if url else "NA"
+        if not image:
+            return "NA"
+        return image.get("src") or image.get("loadlate") or "NA"
     except Exception:
         return "NA"
 
 
 def getsynopsys(movie):
+    """Extracts the plot summary using modern IMDb classes."""
     try:
-        return movie.find_all("p", {"class": "text-muted"})[1].getText().strip()
+        syn = movie.find(
+            ["div", "p", "span"],
+            class_=[
+                "ipc-html-content-inner-div",
+                "ipc-overflowText--lineClamp",
+                "text-muted",
+            ],
+        )
+        if syn:
+            return syn.getText().strip()
+        return "Check IMDb link for full plot and cast details."
     except Exception:
-        return "Plot synopsis not available."
+        return "Check IMDb link for full plot and cast details."
 
 
-def getMovieTitle(header):
+def main(emotion):
+    """Scrapes movie recommendations from modern IMDb based on mood,
+
+    extracting titles, synopses, and clickable movie links.
+    """
+    global movie_title_arr, movie_synopsis_arr, image_url_arr
+    # Clear arrays at each run to prevent duplicates/overflow
+    movie_title_arr.clear()
+    movie_synopsis_arr.clear()
+    image_url_arr.clear()
+
+    genre = "drama" if emotion == "sad" else "comedy"
+    urlhere = (
+        f"https://www.imdb.com/search/title/?genres={genre}&title_type=feature"
+    )
+
+    # Headers giả lập trình duyệt hiện đại
+    headers_browser = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            " (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     try:
-        return header[0].find("a").getText().strip()
-    except Exception:
-        return "Unknown Movie"
+        response = HTTP.get(urlhere, headers=headers_browser, timeout=10)
+        soup = SOUP(response.text, "html.parser")
+
+        # 1. Quét theo thẻ giao diện hiện đại của IMDb (li.ipc-metadata-list-summary-item)
+        items = soup.find_all(
+            ["li", "div"],
+            class_=[
+                "ipc-metadata-list-summary-item",
+                "lister-item mode-advanced",
+            ],
+        )
+
+        for item in items[:15]:
+            link_tag = item.find("a", href=lambda h: h and "/title/tt" in h)
+            if link_tag and link_tag.get("href"):
+                raw_href = link_tag["href"].split("?")[0]
+                movie_link = f"https://www.imdb.com{raw_href}"
+
+                # Lấy tên phim
+                header = item.find(
+                    ["h3", "a"],
+                    class_=["ipc-title__text", "lister-item-header"],
+                )
+                title = getMovieTitle(header if header else link_tag)
+
+                # Lấy tóm tắt
+                synopsis = getsynopsys(item)
+
+                if title and movie_link not in image_url_arr:
+                    movie_title_arr.append(title)
+                    movie_synopsis_arr.append(synopsis)
+                    image_url_arr.append(
+                        movie_link
+                    )  # Lưu link IMDb chính thức để bấm được
+
+        # 2. Dự phòng qua thẻ __NEXT_DATA__ (nếu HTML ẩn thẻ hiển thị)
+        if not movie_title_arr:
+            script_tag = soup.find("script", id="__NEXT_DATA__")
+            if script_tag and script_tag.string:
+                json_data = json.loads(script_tag.string)
+                titles_data = (
+                    json_data.get("props", {})
+                    .get("pageProps", {})
+                    .get("searchResults", {})
+                    .get("titleListItems", [])
+                )
+                for t in titles_data[:10]:
+                    t_id = t.get("titleId")
+                    t_name = t.get("titleText")
+                    t_plot = t.get(
+                        "plot", "Check IMDb link for full plot details."
+                    )
+                    if t_id and t_name:
+                        movie_title_arr.append(t_name)
+                        movie_synopsis_arr.append(t_plot)
+                        image_url_arr.append(
+                            f"https://www.imdb.com/title/{t_id}/"
+                        )
+
+    except Exception as e:
+        print(f"Error scraping IMDb: {e}")
 
 
 # Initialize empty lists to store scraped data
